@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
-const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+const appUrl =
+  process.env.NEXT_PUBLIC_APP_URL ?? "https://base-pulse-psi.vercel.app";
 const iconUrl = process.env.NEXT_PUBLIC_APP_ICON_URL ?? `${appUrl}/window.svg`;
 const imageUrl = process.env.NEXT_PUBLIC_APP_IMAGE_URL ?? `${appUrl}/globe.svg`;
 

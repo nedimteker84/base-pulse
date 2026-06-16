@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { formatGwei } from "viem";
 import { base } from "wagmi/chains";
 import {
@@ -11,6 +12,9 @@ import {
 import { ShareBasePulseButton } from "./ShareBasePulseButton";
 
 const REFRESH_INTERVAL_MS = 15_000;
+const CHECK_IN_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const CHECK_IN_STORAGE_KEY = "base-pulse:last-daily-check-in";
+const CHECK_IN_STORAGE_EVENT = "base-pulse:daily-check-in-updated";
 
 type TrendingInteraction = {
   name: string;
@@ -53,7 +57,43 @@ function formatTime(value?: string | number | Date) {
   }).format(new Date(value));
 }
 
+function formatCountdown(milliseconds: number) {
+  const totalSeconds = Math.max(0, Math.ceil(milliseconds / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  return [hours, minutes, seconds]
+    .map((value) => value.toString().padStart(2, "0"))
+    .join(":");
+}
+
+function getStoredCheckIn() {
+  if (typeof window === "undefined") return null;
+
+  const storedCheckIn = window.localStorage.getItem(CHECK_IN_STORAGE_KEY);
+  const parsedCheckIn = storedCheckIn ? Number(storedCheckIn) : Number.NaN;
+
+  return Number.isFinite(parsedCheckIn) ? parsedCheckIn : null;
+}
+
+function subscribeToCheckInUpdates(onStoreChange: () => void) {
+  window.addEventListener("storage", onStoreChange);
+  window.addEventListener(CHECK_IN_STORAGE_EVENT, onStoreChange);
+
+  return () => {
+    window.removeEventListener("storage", onStoreChange);
+    window.removeEventListener(CHECK_IN_STORAGE_EVENT, onStoreChange);
+  };
+}
+
 export function BasePulseDashboard() {
+  const lastCheckInAt = useSyncExternalStore(
+    subscribeToCheckInUpdates,
+    getStoredCheckIn,
+    () => null,
+  );
+  const [now, setNow] = useState(() => Date.now());
   const gasPrice = useGasPrice({
     chainId: base.id,
     query: { refetchInterval: REFRESH_INTERVAL_MS },
@@ -75,6 +115,35 @@ export function BasePulseDashboard() {
   const isGasLoading = gasPrice.isLoading || feesPerGas.isLoading;
   const hasGasError = gasPrice.isError || feesPerGas.isError;
   const interactionCount = interactions.data?.interactions.length ?? 0;
+  const nextCheckInAt = lastCheckInAt
+    ? lastCheckInAt + CHECK_IN_INTERVAL_MS
+    : null;
+  const remainingCheckInMs = nextCheckInAt ? nextCheckInAt - now : 0;
+  const canCheckIn = !lastCheckInAt || remainingCheckInMs <= 0;
+  const countdownLabel = canCheckIn
+    ? "Available now"
+    : formatCountdown(remainingCheckInMs);
+  const lastCheckInLabel = useMemo(() => {
+    if (!lastCheckInAt) return "No check-in yet";
+
+    return formatTime(lastCheckInAt);
+  }, [lastCheckInAt]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setNow(Date.now());
+    }, 1_000);
+
+    return () => window.clearInterval(timer);
+  }, []);
+
+  function handleDailyCheckIn() {
+    const timestamp = Date.now();
+
+    window.localStorage.setItem(CHECK_IN_STORAGE_KEY, timestamp.toString());
+    window.dispatchEvent(new Event(CHECK_IN_STORAGE_EVENT));
+    setNow(timestamp);
+  }
 
   return (
     <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(0,82,255,0.28),_transparent_34%),linear-gradient(180deg,#050816_0%,#070b17_100%)] px-4 py-5 text-zinc-100 sm:px-6">
@@ -204,6 +273,42 @@ export function BasePulseDashboard() {
         <section className="rounded-3xl border border-white/10 bg-white/5 p-5 sm:p-6">
           <p className="text-sm text-zinc-400">Farcaster sharing</p>
           <ShareBasePulseButton />
+        </section>
+
+        <section className="rounded-3xl border border-blue-400/20 bg-blue-500/10 p-5 shadow-2xl shadow-blue-950/20 backdrop-blur sm:p-6">
+          <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-xs font-medium uppercase tracking-[0.28em] text-blue-200">
+                Daily Check-in
+              </p>
+              <h2 className="mt-2 text-xl font-semibold text-white">
+                Keep your Base Pulse streak alive.
+              </h2>
+              <p className="mt-2 text-sm leading-6 text-zinc-300">
+                Check in once every 24 hours. Your latest check-in is stored
+                privately in this browser.
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-zinc-950/70 p-4 sm:min-w-56">
+              <p className="text-xs text-zinc-500">Next check-in</p>
+              <p className="mt-1 font-mono text-2xl font-semibold text-white">
+                {countdownLabel}
+              </p>
+              <p className="mt-2 text-xs text-zinc-500">
+                Last: {lastCheckInLabel}
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={handleDailyCheckIn}
+            disabled={!canCheckIn}
+            className="mt-5 w-full rounded-2xl border border-blue-300/30 bg-blue-500 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-950/30 transition hover:bg-blue-400 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/10 disabled:text-zinc-500 disabled:shadow-none"
+          >
+            {canCheckIn ? "Check in now" : "Check-in recorded"}
+          </button>
         </section>
       </div>
     </main>

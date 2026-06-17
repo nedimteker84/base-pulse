@@ -13,6 +13,11 @@
 # testing
 /coverage
 
+# hardhat
+/artifacts
+/cache
+/typechain-types
+
 # next.js
 /.next/
 /out/

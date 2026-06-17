@@ -4,27 +4,23 @@
 
 ## Base Sepolia deployment option
 
-This project does not currently include Solidity tooling. A simple deployment path is to add Hardhat later and deploy to Base Sepolia with these environment variables:
+This project uses Hardhat to compile and deploy the contract. Configure these environment variables in `.env.local` or your shell:
 
 ```bash
 BASE_SEPOLIA_RPC_URL=https://sepolia.base.org
 DEPLOYER_PRIVATE_KEY=0x...
 ```
 
-Suggested deploy command after adding Hardhat:
+Compile the contract:
 
 ```bash
-npx hardhat ignition deploy ignition/modules/CheckIn.ts --network baseSepolia
+npm run compile:contracts
 ```
 
-Suggested Base Sepolia network config:
+Deploy to Base Sepolia:
 
-```ts
-baseSepolia: {
-  url: process.env.BASE_SEPOLIA_RPC_URL ?? "https://sepolia.base.org",
-  accounts: process.env.DEPLOYER_PRIVATE_KEY ? [process.env.DEPLOYER_PRIVATE_KEY] : [],
-  chainId: 84532,
-}
+```bash
+npm run deploy:checkin:base-sepolia
 ```
 
 After deployment, save the contract address for the upcoming wagmi frontend integration.

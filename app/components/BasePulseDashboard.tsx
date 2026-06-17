@@ -1,20 +1,58 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { formatGwei } from "viem";
+import { useEffect, useMemo, useState } from "react";
+import {
+  encodeFunctionData,
+  formatEther,
+  formatGwei,
+  isAddress,
+} from "viem";
 import { base } from "wagmi/chains";
 import {
+  useAccount,
   useBlockNumber,
+  useConnect,
+  useEstimateGas,
   useEstimateFeesPerGas,
   useGasPrice,
+  useReadContract,
+  useWaitForTransactionReceipt,
+  useWriteContract,
 } from "wagmi";
 import { ShareBasePulseButton } from "./ShareBasePulseButton";
 
 const REFRESH_INTERVAL_MS = 15_000;
 const CHECK_IN_INTERVAL_MS = 24 * 60 * 60 * 1000;
-const CHECK_IN_STORAGE_KEY = "base-pulse:last-daily-check-in";
-const CHECK_IN_STORAGE_EVENT = "base-pulse:daily-check-in-updated";
+const CHECK_IN_CONTRACT_ADDRESS = process.env
+  .NEXT_PUBLIC_CHECK_IN_CONTRACT_ADDRESS;
+
+const checkInContractAddress =
+  CHECK_IN_CONTRACT_ADDRESS && isAddress(CHECK_IN_CONTRACT_ADDRESS)
+    ? CHECK_IN_CONTRACT_ADDRESS
+    : undefined;
+
+const checkInAbi = [
+  {
+    inputs: [],
+    name: "checkIn",
+    outputs: [],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
+  {
+    inputs: [{ internalType: "address", name: "", type: "address" }],
+    name: "lastCheckInAt",
+    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
+    stateMutability: "view",
+    type: "function",
+  },
+] as const;
+
+const checkInCallData = encodeFunctionData({
+  abi: checkInAbi,
+  functionName: "checkIn",
+});
 
 type TrendingInteraction = {
   name: string;
@@ -68,31 +106,21 @@ function formatCountdown(milliseconds: number) {
     .join(":");
 }
 
-function getStoredCheckIn() {
-  if (typeof window === "undefined") return null;
+function formatBaseFee(value?: bigint) {
+  if (value === undefined) return "Estimating";
 
-  const storedCheckIn = window.localStorage.getItem(CHECK_IN_STORAGE_KEY);
-  const parsedCheckIn = storedCheckIn ? Number(storedCheckIn) : Number.NaN;
-
-  return Number.isFinite(parsedCheckIn) ? parsedCheckIn : null;
-}
-
-function subscribeToCheckInUpdates(onStoreChange: () => void) {
-  window.addEventListener("storage", onStoreChange);
-  window.addEventListener(CHECK_IN_STORAGE_EVENT, onStoreChange);
-
-  return () => {
-    window.removeEventListener("storage", onStoreChange);
-    window.removeEventListener(CHECK_IN_STORAGE_EVENT, onStoreChange);
-  };
+  return `${Number(formatEther(value)).toFixed(8)} ETH`;
 }
 
 export function BasePulseDashboard() {
-  const lastCheckInAt = useSyncExternalStore(
-    subscribeToCheckInUpdates,
-    getStoredCheckIn,
-    () => null,
-  );
+  const { address, isConnected } = useAccount();
+  const { connectAsync, connectors, isPending: isConnectPending } = useConnect();
+  const {
+    data: checkInHash,
+    error: checkInError,
+    isPending: isWritePending,
+    writeContractAsync,
+  } = useWriteContract();
   const [now, setNow] = useState(() => Date.now());
   const gasPrice = useGasPrice({
     chainId: base.id,
@@ -111,15 +139,43 @@ export function BasePulseDashboard() {
     queryFn: fetchInteractions,
     refetchInterval: REFRESH_INTERVAL_MS,
   });
-
-  const isGasLoading = gasPrice.isLoading || feesPerGas.isLoading;
-  const hasGasError = gasPrice.isError || feesPerGas.isError;
-  const interactionCount = interactions.data?.interactions.length ?? 0;
+  const lastCheckIn = useReadContract({
+    address: checkInContractAddress,
+    abi: checkInAbi,
+    functionName: "lastCheckInAt",
+    args: address ? [address] : undefined,
+    chainId: base.id,
+    query: {
+      enabled: Boolean(checkInContractAddress && address),
+      refetchInterval: REFRESH_INTERVAL_MS,
+    },
+  });
+  const lastCheckInAt = lastCheckIn.data
+    ? Number(lastCheckIn.data) * 1000
+    : null;
   const nextCheckInAt = lastCheckInAt
     ? lastCheckInAt + CHECK_IN_INTERVAL_MS
     : null;
   const remainingCheckInMs = nextCheckInAt ? nextCheckInAt - now : 0;
   const canCheckIn = !lastCheckInAt || remainingCheckInMs <= 0;
+  const gasEstimate = useEstimateGas({
+    account: address,
+    chainId: base.id,
+    data: checkInCallData,
+    to: checkInContractAddress,
+    query: {
+      enabled: Boolean(checkInContractAddress && address && canCheckIn),
+      refetchInterval: REFRESH_INTERVAL_MS,
+    },
+  });
+  const checkInReceipt = useWaitForTransactionReceipt({
+    hash: checkInHash,
+    chainId: base.id,
+  });
+
+  const isGasLoading = gasPrice.isLoading || feesPerGas.isLoading;
+  const hasGasError = gasPrice.isError || feesPerGas.isError;
+  const interactionCount = interactions.data?.interactions.length ?? 0;
   const countdownLabel = canCheckIn
     ? "Available now"
     : formatCountdown(remainingCheckInMs);
@@ -128,6 +184,35 @@ export function BasePulseDashboard() {
 
     return formatTime(lastCheckInAt);
   }, [lastCheckInAt]);
+  const estimatedCheckInFee = useMemo(() => {
+    const maxFeePerGas = feesPerGas.data?.maxFeePerGas ?? gasPrice.data;
+
+    if (!gasEstimate.data || !maxFeePerGas) return undefined;
+
+    return gasEstimate.data * maxFeePerGas;
+  }, [feesPerGas.data?.maxFeePerGas, gasEstimate.data, gasPrice.data]);
+  const hasCheckInConfig = Boolean(checkInContractAddress);
+  const hasPendingCheckIn = isWritePending || checkInReceipt.isLoading;
+  const isCheckInDisabled =
+    !hasCheckInConfig || !canCheckIn || hasPendingCheckIn || isConnectPending;
+  const checkInButtonLabel = !hasCheckInConfig
+    ? "Contract not configured"
+    : !isConnected
+      ? "Connect wallet to check in"
+      : isWritePending
+        ? "Confirm in wallet"
+        : checkInReceipt.isLoading
+          ? "Recording on-chain"
+          : canCheckIn
+            ? "Check in on Base"
+            : "Check-in recorded";
+  const checkInStatusLabel = checkInReceipt.isSuccess
+    ? "Check-in confirmed on Base."
+    : checkInError
+      ? checkInError.message
+      : gasEstimate.isError
+        ? "Gas estimate unavailable. Your wallet will show the final fee before signing."
+        : "You will approve this Base transaction in your wallet.";
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -137,12 +222,30 @@ export function BasePulseDashboard() {
     return () => window.clearInterval(timer);
   }, []);
 
-  function handleDailyCheckIn() {
-    const timestamp = Date.now();
+  useEffect(() => {
+    if (checkInReceipt.isSuccess) {
+      lastCheckIn.refetch();
+    }
+  }, [checkInReceipt.isSuccess, lastCheckIn]);
 
-    window.localStorage.setItem(CHECK_IN_STORAGE_KEY, timestamp.toString());
-    window.dispatchEvent(new Event(CHECK_IN_STORAGE_EVENT));
-    setNow(timestamp);
+  async function handleDailyCheckIn() {
+    if (!checkInContractAddress || !canCheckIn || hasPendingCheckIn) return;
+
+    if (!isConnected) {
+      const connector = connectors[0];
+
+      if (!connector) return;
+
+      await connectAsync({ connector, chainId: base.id });
+      return;
+    }
+
+    await writeContractAsync({
+      address: checkInContractAddress,
+      abi: checkInAbi,
+      functionName: "checkIn",
+      chainId: base.id,
+    });
   }
 
   return (
@@ -285,8 +388,8 @@ export function BasePulseDashboard() {
                 Keep your Base Pulse streak alive.
               </h2>
               <p className="mt-2 text-sm leading-6 text-zinc-300">
-                Check in once every 24 hours. Your latest check-in is stored
-                privately in this browser.
+                Check in once every 24 hours with a wallet signature. This is
+                an on-chain Base transaction, so it requires a small gas fee.
               </p>
             </div>
 
@@ -301,14 +404,43 @@ export function BasePulseDashboard() {
             </div>
           </div>
 
+          <div className="mt-5 grid gap-3 text-sm sm:grid-cols-2">
+            <div className="rounded-2xl border border-white/10 bg-zinc-950/70 p-4">
+              <p className="text-xs text-zinc-500">Estimated network fee</p>
+              <p className="mt-1 font-semibold text-white">
+                {formatBaseFee(estimatedCheckInFee)}
+              </p>
+              <p className="mt-2 text-xs leading-5 text-zinc-500">
+                Estimate uses current Base gas. Your wallet shows the final fee
+                before approval.
+              </p>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-zinc-950/70 p-4">
+              <p className="text-xs text-zinc-500">Contract</p>
+              <p className="mt-1 truncate font-mono text-xs text-zinc-200">
+                {checkInContractAddress ?? "Set NEXT_PUBLIC_CHECK_IN_CONTRACT_ADDRESS"}
+              </p>
+              <p className="mt-2 text-xs leading-5 text-zinc-500">
+                Connected wallet: {address ?? "Not connected"}
+              </p>
+            </div>
+          </div>
+
           <button
             type="button"
             onClick={handleDailyCheckIn}
-            disabled={!canCheckIn}
+            disabled={isCheckInDisabled}
             className="mt-5 w-full rounded-2xl border border-blue-300/30 bg-blue-500 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-950/30 transition hover:bg-blue-400 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/10 disabled:text-zinc-500 disabled:shadow-none"
           >
-            {canCheckIn ? "Check in now" : "Check-in recorded"}
+            {checkInButtonLabel}
           </button>
+          <p
+            className={`mt-3 text-xs leading-5 ${
+              checkInError || gasEstimate.isError ? "text-amber-200" : "text-zinc-400"
+            }`}
+          >
+            {checkInStatusLabel}
+          </p>
         </section>
       </div>
     </main>

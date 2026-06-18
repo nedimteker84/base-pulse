@@ -1,4 +1,5 @@
-﻿import { type Chain } from "viem";
-import { base } from "viem/chains"; 
+﻿import { base } from "viem/chains";
 
-export const configuredChain: Chain = base;
+export const configuredChain = base;
+
+export const configuredRpcUrl = "https://mainnet.base.org";

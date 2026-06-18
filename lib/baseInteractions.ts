@@ -1,9 +1,9 @@
 import { createPublicClient, http, type Address } from "viem";
-import { base } from "viem/chains";
+import { configuredChain, configuredRpcUrl } from "./chains";
 
 const baseClient = createPublicClient({
-  chain: base,
-  transport: http(process.env.BASE_RPC_URL),
+  chain: configuredChain,
+  transport: http(configuredRpcUrl),
 });
 
 const knownContracts: Record<string, { name: string; action: string }> = {

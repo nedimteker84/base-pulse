@@ -10,9 +10,9 @@ export const dynamic = "force-static";
 export function GET() {
   return NextResponse.json({
     accountAssociation: {
-      header: process.env.FARCASTER_ACCOUNT_ASSOCIATION_HEADER ?? "",
-      payload: process.env.FARCASTER_ACCOUNT_ASSOCIATION_PAYLOAD ?? "",
-      signature: process.env.FARCASTER_ACCOUNT_ASSOCIATION_SIGNATURE ?? "",
+      header: "eyJmaWQiOjc2OTM2OCwidHlwZSI6ImF1dGgiLCJrZXkiOiIweEU5MWM5RWNiODkzOGE2RDc4Njg5MjM0NTEyN0YzOTJBQmMwRTdjNTIifQ",
+      payload: "eyJkb21haW4iOiJiYXNlLXB1bHNlLXBzaS52ZXJjZWwuYXBwIn0",
+      signature: "YFyvr+w7aNdL0CEOjZJuCmkbM90SvKgutnSkIJyCyetWC46D8UgsJZdr8K1v1UpXxquSEORNPj4NTbQSzKtfjRw="
     },
     miniapp: {
       version: "1",

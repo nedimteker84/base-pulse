@@ -1,9 +1,9 @@
 import { createPublicClient, formatGwei, http } from "viem";
-import { base } from "viem/chains";
+import { configuredChain, configuredRpcUrl } from "./chains";
 
 const baseClient = createPublicClient({
-  chain: base,
-  transport: http(process.env.BASE_RPC_URL),
+  chain: configuredChain,
+  transport: http(configuredRpcUrl),
 });
 
 function serializeGasValue(value: bigint) {
@@ -21,8 +21,8 @@ export async function getBaseGasSnapshot() {
   ]);
 
   return {
-    chainId: base.id,
-    chainName: base.name,
+    chainId: configuredChain.id,
+    chainName: configuredChain.name,
     blockNumber: blockNumber.toString(),
     gasPrice: serializeGasValue(gasPrice),
     maxFeePerGas: serializeGasValue(feesPerGas.maxFeePerGas),
